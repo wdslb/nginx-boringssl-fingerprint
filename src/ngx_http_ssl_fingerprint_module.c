@@ -30,31 +30,6 @@ ngx_module_t ngx_http_ssl_fingerprint_module = {
     NULL,                         /* exit master */
     NGX_MODULE_V1_PADDING};
 
-
-static ngx_int_t
-ngx_http_ssl_greased(ngx_http_request_t *r,
-                 ngx_http_variable_value_t *v, uintptr_t data)
-{
-    if (r->connection == NULL)
-    {
-        return NGX_OK;
-    }
-
-    if (r->connection->ssl == NULL)
-    {
-        return NGX_OK;
-    }
-
-    v->len = 1;
-    v->data = (u_char*)(r->connection->ssl->fp_tls_greased ? "1" : "0");
-
-    v->valid = 1;
-    v->no_cacheable = 1;
-    v->not_found = 0;
-
-    return NGX_OK;
-}
-
 static ngx_int_t
 ngx_http_ssl_fingerprint(ngx_http_request_t *r,
                  ngx_http_variable_value_t *v, uintptr_t data)
@@ -110,10 +85,6 @@ ngx_http_ssl_fingerprint_hash(ngx_http_request_t *r,
 }
 
 static ngx_http_variable_t ngx_http_ssl_fingerprint_variables_list[] = {
-    {ngx_string("http_ssl_greased"),
-     NULL,
-     ngx_http_ssl_greased,
-     0, 0, 0},
     {ngx_string("http_ssl_ja3"),
      NULL,
      ngx_http_ssl_fingerprint,
@@ -139,8 +110,8 @@ ngx_http_ssl_fingerprint_init(ngx_conf_t *cf)
     for (l = 0; l < vars_len; ++l)
     {
         v = ngx_http_add_variable(cf,
-                                  &ngx_http_ssl_fingerprint_variables_list[l].name,
-                                  ngx_http_ssl_fingerprint_variables_list[l].flags);
+                &ngx_http_ssl_fingerprint_variables_list[l].name,
+                ngx_http_ssl_fingerprint_variables_list[l].flags);
         if (v == NULL)
         {
             continue;

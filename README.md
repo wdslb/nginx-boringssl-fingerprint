@@ -3,29 +3,38 @@
 A stable nginx module for SSL/TLS ja3 fingerprint, with high [performance](#performance).
 
 ## Patches
- - [nginx - save client hello fingerprint](patches/nginx.patch)
- - [openssl - expose client hello data](patches/openssl.1_1_1.patch)
+ - [nginx - calc client hello fingerprint](patches/nginx.patch)
 
 ## Configuration
 
 ### Variables
 
-| Name              | Default Value | Comments                                                    |
-| ----------------- | ------------- | ----------------------------------------------------------- |
-| http_ssl_greased  | 0             | Chrome grease flag                                          |
-| http_ssl_ja3      | NULL          | The ja3 fingerprint for a SSL connection for a HTTP server. |
-| http_ssl_ja3_hash | NULL          | ja3 md5 hash                                                |
+| Name                 | Default Value | Comments                                                    |
+| -------------------- | ------------- | ----------------------------------------------------------- |
+| ssl_preread_ja3      | NULL          | The ja3 fingerprint for a SSL connection for a HTTP server. |
+| ssl_preread_ja3_hash | NULL          | ja3 md5 hash                                                |
 
 #### Example
 
 ```nginx
-http {
+stream {
+    log_format ssl_preread '$remote_addr [$time_local] '
+                           '$protocol $status $bytes_sent $bytes_received '
+                           '$session_time "$upstream_addr" '
+                           '"$ssl_preread_ja3_hash" "$ssl_preread_ja3"';
+
+    upstream backend {
+        server 127.0.0.1:443;
+    }
+
     server {
-        listen                 127.0.0.1:8443 ssl;
-        ssl_certificate        cert.pem;
-        ssl_certificate_key    priv.key;
-        error_log              /dev/stderr debug;
-        return                 200 "$http_ssl_ja3";
+        listen 8443;
+        
+        ssl_preread on;
+        
+        proxy_pass backend;
+
+        access_log logs/stream_backend.log ssl_preread buffer=64k flush=30s;
     }
 }
 ```
@@ -34,72 +43,54 @@ http {
 
 ```bash
 
+# Clone BoringSSL and build (https://github.com/google/boringssl/blob/master/BUILDING.md)
+
+$ git clone https://github.com/google/boringssl.git
+$ cd boringssl
+$ mkdir build
+$ cd build
+$ cmake -GNinja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POSITION_INDEPENDENT_CODE=ON ..
+$ ninja
+
+# Download nginx release
+
+$ wget https://nginx.org/download/nginx-1.23.2.tar.gz
+
+OR 
+
+$ curl -JLO https://nginx.org/download/nginx-1.23.2.tar.gz
+
+
+# Uncompress
+
+$ tar xf nginx-1.23.2.tar.gz
+
+
 # Clone
 
-$ git clone -b OpenSSL_1_1_1-stable --depth=1 https://github.com/openssl/openssl
-$ git clone -b release-1.23.1 --depth=1 https://github.com/nginx/nginx
 $ git clone https://github.com/phuslu/nginx-ssl-fingerprint
+
+
 
 # Patch
 
-$ patch -p1 -d openssl < nginx-ssl-fingerprint/patches/openssl.1_1_1.patch
-$ patch -p1 -d nginx < nginx-ssl-fingerprint/patches/nginx.patch
+$ patch -p1 -d nginx-1.23.2 < nginx-ssl-fingerprint/patches/ngx_stream_ssl_preread_module.patch
 
 # Configure & Build
 
 $ cd nginx
-$ ASAN_OPTIONS=symbolize=1 ./auto/configure --with-openssl=$(pwd)/../openssl --add-module=$(pwd)/../nginx-ssl-fingerprint --with-http_ssl_module --with-stream_ssl_module --with-debug --with-stream --with-cc-opt="-fsanitize=address -O -fno-omit-frame-pointer" --with-ld-opt="-L/usr/local/lib -Wl,-E -lasan"
+$ ./auto/configure --with-openssl=$(pwd)/../boringssl --with-http_ssl_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../../boringssl/include -fPIC" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -Wl,-z,relro -Wl,-z,now -fPIC -lrt -lssl -lcrypto"
 $ make
 
 # Test
 
-$ objs/nginx -p . -c $(pwd)/../nginx-ssl-fingerprint/nginx.conf
-$ curl -k https://127.0.0.1:8444
+$ objs/nginx -p . -c (patch-of-nginx.conf)
+$ curl -k https://127.0.0.1:8443
+
+OR
+
+Use browser
 ```
-
-## Performance 
-
-### Server
-
-| Type   | Service             | Cores | Memeory(G) |
-| ------ | ------------------- | ----- | ---------- |
-| Server | nginx with 5 worker | 8     | 8          |
-| Client | wrk                 | 8     | 8          |
-
-### Performance Results
-
-```bash
-for i in $(seq 1 10); do
-    wrk https://localhost/  --latency -t48 -d15 -c2000  >/tmp/wrk.log.$i
-done
-```
-
-- QPS: Average Req/Second in 10 times
-- Latency: Average 50% latency (ms) in 10 times
-
-v0.2.0 ~ v0.3.0
-
-| WRK Connection | QPS Cost | Origin Req/Sec | Origin Latency | Req/Sec with fingerprint | Latency with fingerprint |
-| -------------- | -------- | -------------- | -------------- | ------------------------ | ------------------------ |
-| 50             |  9.98%   | 2990.26        | 14.151         | 2694.96                  | 15.957                   |
-| 100            |  26.2%   | 3718.62        | 24.397         | 2743.47                  | 32.091                   |
-| 200            |  20.1%   | 3680.09        | 49.332         | 2941.92                  | 63.351                   |
-| 500            |  27.1%   | 3503.64        | 111.085        | 2555.59                  | 149.989                  |
-| 1000           |  22.4%   | 3333.68        | 134.187        | 2586.89                  | 169.36                   |
-| 1500           |  28.6%   | 3497.15        | 135.949        | 2498.74                  | 177.784                  |
-| 2000           |  37.0%   | 2390.82        | 229.657        | 1506.78                  | 275.601                  |
-
-v0.4.0
-
-| WRK Connection | QPS Cost | Origin Req/Sec | Origin Latency | Req/Sec with fingerprint | Latency with fingerprint |
-| -------------- | -------- | -------------- | -------------- | ------------------------ | ------------------------ |
-| 50             | 8.60%    | 36795.9        | 1.211          | 33624.2                  | 1.33                     |
-| 100            | 8.4%     | 36831.2        | 2.43545        | 33734.6                  | 66.8545                  |
-| 200            | 8.39%    | 36862.5        | 4.814          | 33767.2                  | 5.28                     |
-| 500            | 8.45     | 36598.8        | 11.827         | 33505.5                  | 12.786                   |
-| 1000           | 9.63%    | 33657.1        | 20.877         | 36900.1                  | 20.059                   |
-| 1500           | 8.95%    | 36806.3        | 27.591         | 33511                    | 28.155                   |
-| 2000           | 8.71%    | 37460.2        | 30.664         | 34194.7                  | 31.504                   |
 
 ## TLS Client Hello Packet
 ```
@@ -306,11 +297,12 @@ The extensions order is random, but relay on the OpenSSL library.  Every tool h
 |45|TLSEXT_TYPE_psk_kex_modes||
 |51| TLSEXT_TYPE_key_share||
 |17513|TLSEXT_TYPE_application_settings|patched after v0.3.0|
-|0xff01|TLSEXT_TYPE_renegotiate| |
+|0xff01(65281)|TLSEXT_TYPE_renegotiate| |
 |-|Reserved||Ignore this extension|
 
 
 `TLSEXT_TYPE_supported_groups` and `TLSEXT_TYPE_elliptic_curves` they are same filed. More details refer:
+https://github.com/google/boringssl/blob/master/include/openssl/tls1.h#L229
 https://github.com/openssl/openssl/blob/master/include/openssl/tls1.h#L102-L103
 
 
