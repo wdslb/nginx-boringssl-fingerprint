@@ -3,7 +3,7 @@
 A stable nginx module for SSL/TLS ja3 fingerprint, with high [performance](#performance).
 
 ## Patches
- - [nginx - calc client hello fingerprint](patches/nginx.patch)
+ - [nginx - calc client hello fingerprint and add to vars](patches/ngx_stream_ssl_preread_module.patch)
 
 ## Configuration
 
@@ -11,7 +11,7 @@ A stable nginx module for SSL/TLS ja3 fingerprint, with high [performance](#perf
 
 | Name                 | Default Value | Comments                                                    |
 | -------------------- | ------------- | ----------------------------------------------------------- |
-| ssl_preread_ja3      | NULL          | The ja3 fingerprint for a SSL connection for a HTTP server. |
+| ssl_preread_ja3      | NULL          | The ja3 fingerprint for a SSL connection from client hello. |
 | ssl_preread_ja3_hash | NULL          | ja3 md5 hash                                                |
 
 #### Example
@@ -68,13 +68,13 @@ $ tar xf nginx-1.23.2.tar.gz
 
 # Clone
 
-$ git clone https://github.com/phuslu/nginx-ssl-fingerprint
+$ git clone https://github.com/wdslb/nginx-boringssl-fingerprint.git
 
 
 
 # Patch
 
-$ patch -p1 -d nginx-1.23.2 < nginx-ssl-fingerprint/patches/ngx_stream_ssl_preread_module.patch
+$ patch -p1 -d nginx-1.23.2 < nginx-boringssl-fingerprint/patches/ngx_stream_ssl_preread_module.patch
 
 # Configure & Build
 
