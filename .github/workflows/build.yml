@@ -1,6 +1,6 @@
 name: Build
 
-run-name: Build nginx
+run-name: Build
 
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
@@ -59,13 +59,17 @@ jobs:
       - name: Build bssl
         working-directory: ${{github.workspace}}/boringssl/build
         # Build your program with the given configuration
-        run: ninja
+        run: ninja -v
 
       - name: Test bssl
         working-directory: ${{github.workspace}}/boringssl
         # Execute tests defined by the CMake configuration.
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ninja -C build run_tests
+
+      - uses: actions/checkout@v3
+        with:
+          path: 'nginx-boringssl-fingerprint'
 
       - uses: actions/checkout@v3
         with:
@@ -78,7 +82,34 @@ jobs:
           path: 'nginx'
           ref: 'release-1.23.2'
 
+      - uses: actions/checkout@v3
+        with:
+          repository: 'nginx/nginx-tests'
+          path: 'nginx-tests'
+
       - name: List dir
         working-directory: ${{github.workspace}}
         # Build your program with the given configuration
         run: ls -al
+
+      - name: Patch
+        working-directory: ${{github.workspace}}
+        run: patch -p1 -d nginx < nginx-boringssl-fingerprint/patches/ngx_ssl_preread.patch
+
+      - name: Configure nginx
+        env:
+          CC: ${{ env.LLVM_PATH }}/bin/clang
+        working-directory: ${{github.workspace}}/nginx
+        run: ./auto/configure --with-openssl=$(pwd)/../boringssl --with-zlib=$(pwd)/../zlib --with-http_ssl_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
+
+      - name: Make nginx
+        env:
+          CC: ${{ env.LLVM_PATH }}/bin/clang
+        working-directory: ${{github.workspace}}/nginx
+        run: make
+
+      - name: Test nginx
+        env:
+          TEST_NGINX_BINARY: ${{github.workspace}}/nginx/objs/nginx
+        working-directory: ${{github.workspace}}/nginx-tests
+        run: prove .
