@@ -9,7 +9,7 @@ env:
 on: [push]
 
 jobs:
-  build-bssl:
+  build-bssl-and-nginx:
     runs-on: ubuntu-latest
 
     steps:
@@ -98,7 +98,7 @@ jobs:
         env:
           CC: ${{ env.LLVM_PATH }}/bin/clang
         working-directory: ${{github.workspace}}/nginx-1.23.2
-        run: ./configure --with-openssl=$(pwd)/../boringssl --with-zlib=$(pwd)/../zlib --with-http_ssl_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
+        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
 
       - name: Make nginx
         env:
