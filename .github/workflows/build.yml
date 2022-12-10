@@ -76,11 +76,11 @@ jobs:
           repository: 'cloudflare/zlib'
           path: 'zlib'
 
-      - uses: actions/checkout@v3
-        with:
-          repository: 'nginx/nginx'
-          path: 'nginx'
-          ref: 'release-1.23.2'
+      - name: Download nginx tarball
+        run: wget https://nginx.org/download/nginx-1.23.2.tar.gz
+
+      - name: Uncompress nginx tarball
+        run: tar xf nginx-1.23.2.tar.gz
 
       - uses: actions/checkout@v3
         with:
@@ -88,28 +88,26 @@ jobs:
           path: 'nginx-tests'
 
       - name: List dir
-        working-directory: ${{github.workspace}}
         # Build your program with the given configuration
         run: ls -al
 
       - name: Patch
-        working-directory: ${{github.workspace}}
-        run: patch -p1 -d nginx < nginx-boringssl-fingerprint/patches/ngx_ssl_preread.patch
+        run: patch -p1 -d nginx-1.23.2 < nginx-boringssl-fingerprint/patches/ngx_ssl_preread.patch
 
       - name: Configure nginx
         env:
           CC: ${{ env.LLVM_PATH }}/bin/clang
-        working-directory: ${{github.workspace}}/nginx
-        run: ./auto/configure --with-openssl=$(pwd)/../boringssl --with-zlib=$(pwd)/../zlib --with-http_ssl_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
+        working-directory: ${{github.workspace}}/nginx-1.23.2
+        run: ./configure --with-openssl=$(pwd)/../boringssl --with-zlib=$(pwd)/../zlib --with-http_ssl_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
 
       - name: Make nginx
         env:
           CC: ${{ env.LLVM_PATH }}/bin/clang
-        working-directory: ${{github.workspace}}/nginx
+        working-directory: ${{github.workspace}}/nginx-1.23.2
         run: make
 
       - name: Test nginx
         env:
-          TEST_NGINX_BINARY: ${{github.workspace}}/nginx/objs/nginx
+          TEST_NGINX_BINARY: ${{github.workspace}}/nginx-1.23.2/objs/nginx
         working-directory: ${{github.workspace}}/nginx-tests
         run: prove .
