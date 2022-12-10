@@ -1,9 +1,9 @@
-# nginx-ssl-fingerprint
+# nginx-boringssl-fingerprint
 
-A stable nginx module for SSL/TLS ja3 fingerprint, with high [performance](#performance).
+A stable nginx module for SSL/TLS ja3 fingerprint, with high performance.
 
 ## Patches
- - [nginx - calc client hello fingerprint and add to vars](patches/ngx_stream_ssl_preread_module.patch)
+ - [nginx - calc client hello fingerprint and add to vars](patches/ngx_ssl_preread.patch)
 
 ## Configuration
 
