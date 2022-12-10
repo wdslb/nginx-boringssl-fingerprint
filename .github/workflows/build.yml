@@ -54,7 +54,7 @@ jobs:
         working-directory: ${{github.workspace}}/boringssl/build
         # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
         # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-        run: cmake -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=${{ env.LLVM_PATH }}/bin/clang-12 -DCMAKE_CXX_COMPILER=${{ env.LLVM_PATH }}/bin/clang++-12 -GNinja ..
+        run: cmake -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=${{ env.LLVM_PATH }}/bin/clang -DCMAKE_CXX_COMPILER=${{ env.LLVM_PATH }}/bin/clang++ -GNinja ..
 
       - name: Build bssl
         working-directory: ${{github.workspace}}/boringssl/build
