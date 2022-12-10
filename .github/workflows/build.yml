@@ -42,6 +42,14 @@ jobs:
       - name: Try go
         run: go version
 
+      - uses: actions/cache@v3
+        with:
+          path: |
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
       - uses: actions/checkout@v3
         with:
           repository: 'google/boringssl'
@@ -173,7 +181,7 @@ jobs:
           LD: ${{ env.LLVM_PATH }}/bin/clang
           LINK: ${{ env.LLVM_PATH }}/bin/clang
         working-directory: ${{github.workspace}}/nginx-1.23.2
-        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
+        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -fsanitize=address -lrt -lssl -lcrypto"
 
       - name: Make nginx
         env:
