@@ -62,6 +62,8 @@ jobs:
         run: ninja -v
 
       - name: Test bssl
+        env:
+          ASAN_OPTIONS: "detect_leaks=1"
         working-directory: ${{github.workspace}}/boringssl
         # Execute tests defined by the CMake configuration.
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
@@ -83,7 +85,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcre2-dev libpcre3-dev zlib1g-dev
+          sudo apt-get install -y libpcre2-dev libpcre3-dev zlib1g-dev libasan6
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
@@ -169,7 +171,7 @@ jobs:
         env:
           CC: ${{ env.LLVM_PATH }}/bin/clang
         working-directory: ${{github.workspace}}/nginx-1.23.2
-        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
+        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto -lasan"
 
       - name: Make nginx
         env:
@@ -180,5 +182,6 @@ jobs:
       - name: Test nginx
         env:
           TEST_NGINX_BINARY: ${{github.workspace}}/nginx-1.23.2/objs/nginx
+          ASAN_OPTIONS: "detect_leaks=1"
         working-directory: ${{github.workspace}}/nginx-tests
         run: prove .
