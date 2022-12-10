@@ -131,8 +131,8 @@ jobs:
       - name: Move libs
         run: |
           ls -al
-          mv libcrypto.a ${{github.workspace}}/boringssl/build/crypto
-          mv libssl.a ${{github.workspace}}/boringssl/build/ssl
+          mv crypto/libcrypto.a ${{github.workspace}}/boringssl/build/crypto/
+          mv ssl/libssl.a ${{github.workspace}}/boringssl/build/ssl/
 
       - uses: actions/checkout@v3
         with:
