@@ -4,12 +4,12 @@ run-name: Build nginx
 
 env:
   # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
-  BUILD_TYPE: RelWithDebInfo
+  BUILD_TYPE: Debug
 
 on: [push]
 
 jobs:
-  init-build-env:
+  build-bssl:
     runs-on: ubuntu-latest
 
     steps:
@@ -42,11 +42,6 @@ jobs:
       - name: Try go
         run: go version
 
-  build-bssl:
-    needs: init-build-env
-    runs-on: ubuntu-latest
-
-    steps:
       - uses: actions/checkout@v3
         with:
           repository: 'google/boringssl'
@@ -59,7 +54,7 @@ jobs:
         working-directory: ${{github.workspace}}/boringssl/build
         # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
         # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
-        run: cmake -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=${{ env.LLVM_PATH }}/bin/clang -DCMAKE_CXX_COMPILER=${{ env.LLVM_PATH }}/bin/clang++ -DCMAKE_LINKER=${{ env.LLVM_PATH }}/bin/llvm-ld -GNinja ..
+        run: cmake -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=${{ env.LLVM_PATH }}/bin/clang -DCMAKE_CXX_COMPILER=${{ env.LLVM_PATH }}/bin/clang++ -DCMAKE_LINKER=${{ env.LLVM_PATH }}/bin/llvm-ld -DASAN=1 -GNinja ..
 
       - name: Build bssl
         working-directory: ${{github.workspace}}/boringssl/build
@@ -72,32 +67,17 @@ jobs:
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ninja -C build run_tests
 
-  checkout-deps:
-    needs: build-bssl
-    runs-on: ubuntu-latest
-
-    steps:
       - uses: actions/checkout@v3
         with:
           repository: 'cloudflare/zlib'
           path: 'zlib'
 
-  checkout-nginx:
-    needs: build-bssl
-    runs-on: ubuntu-latest
-
-    steps:
       - uses: actions/checkout@v3
         with:
           repository: 'nginx/nginx'
           path: 'nginx'
           ref: 'release-1.23.2'
 
-  list-dir:
-    needs: [checkout-deps,checkout-nginx]
-    runs-on: ubuntu-latest
-
-    steps:
       - name: List dir
         working-directory: ${{github.workspace}}
         # Build your program with the given configuration
