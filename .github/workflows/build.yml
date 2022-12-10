@@ -170,13 +170,15 @@ jobs:
       - name: Configure nginx
         env:
           CC: ${{ env.LLVM_PATH }}/bin/clang
+          LD: ${{ env.LLVM_PATH }}/bin/llvm-ld
           LINK: ${{ env.LLVM_PATH }}/bin/llvm-ld
         working-directory: ${{github.workspace}}/nginx-1.23.2
-        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto -static-libasan"
+        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -fPIC -fsanitize=address -fsanitize-address-use-after-scope -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -lrt -lssl -lcrypto"
 
       - name: Make nginx
         env:
           CC: ${{ env.LLVM_PATH }}/bin/clang
+          LD: ${{ env.LLVM_PATH }}/bin/llvm-ld
           LINK: ${{ env.LLVM_PATH }}/bin/llvm-ld
         working-directory: ${{github.workspace}}/nginx-1.23.2
         run: make
