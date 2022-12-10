@@ -17,11 +17,10 @@ jobs:
         with:
           repository: 'google/boringssl'
       
-      - name: Set up Clang
-        uses: egor-tensin/setup-clang@v1
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
         with:
-          version: 12
-          platform: x64
+          version: '12'
 
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.13
