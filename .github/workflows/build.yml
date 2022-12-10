@@ -184,6 +184,7 @@ jobs:
       - name: Test nginx
         env:
           TEST_NGINX_BINARY: ${{github.workspace}}/nginx-1.23.2/objs/nginx
-          ASAN_OPTIONS: "detect_leaks=1"
+          ASAN_OPTIONS: "detect_leaks=1:symbolize=1:halt_on_error=0"
+          ASAN_SYMBOLIZER_PATH: ${{ env.LLVM_PATH }}/bin/llvm-symbolizer
         working-directory: ${{github.workspace}}/nginx-tests
         run: prove .
