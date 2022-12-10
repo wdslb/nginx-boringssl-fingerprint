@@ -93,7 +93,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libpcre2-dev libpcre3-dev zlib1g-dev libasan6
+          sudo apt-get install -y libpcre2-dev libpcre3-dev zlib1g-dev libasan6 libio-socket-ssl-perl
 
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
