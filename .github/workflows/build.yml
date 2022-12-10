@@ -1,0 +1,67 @@
+name: Build
+
+run-name: Build nginx
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: RelWithDebInfo
+
+on: [push]
+
+jobs:
+  build-bssl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        repository: 'google/boringssl'
+      
+      - name: Set up Clang
+        uses: egor-tensin/setup-clang@v1
+        with:
+          version: 12
+          platform: x64
+
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.13
+        with:
+          cmake-version: '3.24.x'
+
+      - name: Try cmake
+        run: cmake --version
+
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+        with:
+          # ninja version to download. Default: 1.10.0
+          version: 1.11.1
+
+      - name: Try ninja
+        run: ninja --version
+
+      - uses: actions/setup-go@v3
+        with:
+          go-version: '>=1.19.0' # The Go version to download (if necessary) and use.
+
+      - name: Try go
+        run: go version
+
+      - name: Mkdir
+        run: mkdir ${{github.workspace}}/boringssl/build
+
+      - name: CMake bssl
+        working-directory: ${{github.workspace}}/boringssl/build
+        # Configure CMake in a 'build' subdirectory. `CMAKE_BUILD_TYPE` is only required if you are using a single-configuration generator such as make.
+        # See https://cmake.org/cmake/help/latest/variable/CMAKE_BUILD_TYPE.html?highlight=cmake_build_type
+        run: cmake -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_COMPILER=clang-12 -DCMAKE_CXX_COMPILER=clang++-12 -GNinja ..
+
+      - name: Build bssl
+        working-directory: ${{github.workspace}}/boringssl/build
+        # Build your program with the given configuration
+        run: ninja
+
+      - name: Test bssl
+        working-directory: ${{github.workspace}}/boringssl
+        # Execute tests defined by the CMake configuration.
+        # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
+        run: ninja -C build run_tests

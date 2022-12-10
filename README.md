@@ -9,10 +9,12 @@ A stable nginx module for SSL/TLS ja3 fingerprint, with high [performance](#perf
 
 ### Variables
 
-| Name                 | Default Value | Comments                                                    |
-| -------------------- | ------------- | ----------------------------------------------------------- |
-| ssl_preread_ja3      | NULL          | The ja3 fingerprint for a SSL connection from client hello. |
-| ssl_preread_ja3_hash | NULL          | ja3 md5 hash                                                |
+| Name                 | Default Value | Comments                                                      |
+| -------------------- | ------------- | ------------------------------------------------------------- |
+| http_ssl_ja3         | NULL          | The ja3 fingerprint for a HTTPS connection from client hello. |
+| http_ssl_ja3_hash    | NULL          | ja3 md5 hash                                                  |
+| ssl_preread_ja3      | NULL          | The ja3 fingerprint for a SSL connection from client hello.   |
+| ssl_preread_ja3_hash | NULL          | ja3 md5 hash                                                  |
 
 #### Example
 
@@ -37,6 +39,22 @@ stream {
         access_log logs/stream_backend.log ssl_preread buffer=64k flush=30s;
     }
 }
+
+http {
+    log_format  ssl  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for" '
+                      '"$http_ssl_ja3_hash" "$http_ssl_ja3"';
+
+    server {
+        listen 443;
+
+        ...
+
+        access_log  logs/backend.log  ssl;
+    }
+}
+
 ```
 
 ## Quick Start
@@ -74,7 +92,7 @@ $ git clone https://github.com/wdslb/nginx-boringssl-fingerprint.git
 
 # Patch
 
-$ patch -p1 -d nginx-1.23.2 < nginx-boringssl-fingerprint/patches/ngx_stream_ssl_preread_module.patch
+$ patch -p1 -d nginx-1.23.2 < nginx-boringssl-fingerprint/patches/ngx_ssl_preread.patch
 
 # Configure & Build
 

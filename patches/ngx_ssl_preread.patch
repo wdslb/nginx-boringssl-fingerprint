@@ -1,0 +1,844 @@
+diff -uprN a/src/event/ngx_event_openssl.c b/src/event/ngx_event_openssl.c
+--- a/src/event/ngx_event_openssl.c	2022-12-09 15:20:24.639015133 +0800
++++ b/src/event/ngx_event_openssl.c	2022-12-10 13:58:29.646232058 +0800
+@@ -8,6 +8,7 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ #include <ngx_event.h>
++#include <ngx_md5.h>
+ 
+ 
+ #define NGX_SSL_PASSWORD_BUFFER_SIZE  4096
+@@ -3311,6 +3312,10 @@ done:
+         return rc;
+     }
+ 
++    if (c->ssl->ja3_pool) {
++        ngx_destroy_pool(c->ssl->ja3_pool);
++    }
++
+     SSL_free(c->ssl->connection);
+     c->ssl = NULL;
+     c->recv = ngx_recv;
+@@ -4748,6 +4753,33 @@ ngx_ssl_cleanup_ctx(void *data)
+     SSL_CTX_free(ssl->ctx);
+ }
+ 
++ngx_int_t
++ngx_ssl_get_ja3_str(ngx_connection_t *c, ngx_pool_t *pool, ngx_str_t *s)
++{
++    s->data = c->ssl->ja3_str.data;
++    s->len = c->ssl->ja3_str.len;
++    return NGX_OK;
++}
++
++ngx_int_t
++ngx_ssl_get_ja3_md5(ngx_connection_t *c, ngx_pool_t *pool, ngx_str_t *s)
++{
++    ngx_md5_t md5_ctx;
++    u_char hash[16] = {0};
++
++    s->data = ngx_pnalloc(c->pool, 32);
++    if (s->data == NULL) {
++        return NGX_ERROR; 
++    }
++
++    ngx_md5_init(&md5_ctx);
++    ngx_md5_update(&md5_ctx, c->ssl->ja3_str.data, c->ssl->ja3_str.len);
++    ngx_md5_final(hash, &md5_ctx);
++    ngx_hex_dump(s->data, hash, 16);
++    s->len = 32;
++
++    return NGX_OK;
++}
+ 
+ ngx_int_t
+ ngx_ssl_check_host(ngx_connection_t *c, ngx_str_t *name)
+diff -uprN a/src/event/ngx_event_openssl.h b/src/event/ngx_event_openssl.h
+--- a/src/event/ngx_event_openssl.h	2022-10-19 15:56:21.000000000 +0800
++++ b/src/event/ngx_event_openssl.h	2022-12-10 13:58:34.278231896 +0800
+@@ -120,6 +120,13 @@ struct ngx_ssl_connection_s {
+     unsigned                    in_ocsp:1;
+     unsigned                    early_preread:1;
+     unsigned                    write_blocked:1;
++
++    ngx_buf_t                  *client_hello_buf;
++    size_t                      client_hello_len;
++
++    ngx_pool_t                 *ja3_pool;
++    ngx_str_t                   ja3_str;
++    ngx_str_t                   ja3_md5;
+ };
+ 
+ 
+@@ -313,6 +320,10 @@ void ngx_cdecl ngx_ssl_error(ngx_uint_t
+     char *fmt, ...);
+ void ngx_ssl_cleanup_ctx(void *data);
+ 
++ngx_int_t ngx_ssl_get_ja3_str(ngx_connection_t *c, ngx_pool_t *pool,
++    ngx_str_t *s);
++ngx_int_t ngx_ssl_get_ja3_md5(ngx_connection_t *c, ngx_pool_t *pool,
++    ngx_str_t *s);
+ 
+ extern int  ngx_ssl_connection_index;
+ extern int  ngx_ssl_server_conf_index;
+diff -uprN a/src/http/modules/ngx_http_ssl_module.c b/src/http/modules/ngx_http_ssl_module.c
+--- a/src/http/modules/ngx_http_ssl_module.c	2022-12-09 15:21:47.159016429 +0800
++++ b/src/http/modules/ngx_http_ssl_module.c	2022-12-10 13:59:39.714229615 +0800
+@@ -405,6 +405,12 @@ static ngx_http_variable_t  ngx_http_ssl
+     { ngx_string("ssl_client_v_remain"), NULL, ngx_http_ssl_variable,
+       (uintptr_t) ngx_ssl_get_client_v_remain, NGX_HTTP_VAR_CHANGEABLE, 0 },
+ 
++    { ngx_string("http_ssl_ja3"), NULL, ngx_http_ssl_variable,
++      (uintptr_t) ngx_ssl_get_ja3_str, NGX_HTTP_VAR_CHANGEABLE, 0 },
++
++    { ngx_string("http_ssl_ja3_hash"), NULL, ngx_http_ssl_variable,
++      (uintptr_t) ngx_ssl_get_ja3_md5, NGX_HTTP_VAR_CHANGEABLE, 0 },
++
+       ngx_http_null_variable
+ };
+ 
+diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
+--- a/src/http/ngx_http_request.c	2022-10-19 15:56:21.000000000 +0800
++++ b/src/http/ngx_http_request.c	2022-12-10 13:59:12.770230552 +0800
+@@ -9,6 +9,24 @@
+ #include <ngx_core.h>
+ #include <ngx_http.h>
+ 
++#include <math.h>
++
++
++static const unsigned short GREASE_BEGIN = 0x0a0a;
++static const unsigned short GREASE_BITMASK = 0x0f0f;
++
++static int is_ext_greased(int id)
++{
++    if (GREASE_BEGIN == (id & GREASE_BITMASK)) {
++        return 1;
++    }
++
++    return 0;
++}
++
++static size_t get_int_len(int value) {
++    return (value == 0 ? 1 : (int)(log10(value) + 1));
++}
+ 
+ static void ngx_http_wait_request_handler(ngx_event_t *ev);
+ static ngx_http_request_t *ngx_http_alloc_request(ngx_connection_t *c);
+@@ -60,6 +78,7 @@ static u_char *ngx_http_log_error_handle
+ #if (NGX_HTTP_SSL)
+ static void ngx_http_ssl_handshake(ngx_event_t *rev);
+ static void ngx_http_ssl_handshake_handler(ngx_connection_t *c);
++static void ngx_http_ssl_preread_handler(ngx_connection_t *c);
+ #endif
+ 
+ 
+@@ -652,6 +671,9 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
+     ngx_http_core_loc_conf_t  *clcf;
+     ngx_http_core_srv_conf_t  *cscf;
+ 
++    u_char                    *p_client_hello, client_hello_buf[NGX_SSL_BUFSIZE];
++    ssize_t                    client_hello_len;
++
+     c = rev->data;
+     hc = c->data;
+ 
+@@ -734,6 +756,10 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
+             ngx_log_debug1(NGX_LOG_DEBUG_HTTP, rev->log, 0,
+                            "https ssl handshake: 0x%02Xd", buf[0]);
+ 
++            client_hello_len = recv(c->fd, (char *) client_hello_buf, NGX_SSL_BUFSIZE, MSG_PEEK);
++            ngx_log_debug1(NGX_LOG_DEBUG_HTTP, rev->log, 0,
++                           "https ssl handshake length: %d", client_hello_len);
++
+             clcf = ngx_http_get_module_loc_conf(hc->conf_ctx,
+                                                 ngx_http_core_module);
+ 
+@@ -752,6 +778,21 @@ ngx_http_ssl_handshake(ngx_event_t *rev)
+                 return;
+             }
+ 
++            p_client_hello = client_hello_buf;
++            p_client_hello++; /* handshake */
++            p_client_hello += 2; /* version */
++            p_client_hello += 2; /* length */
++            p_client_hello++; /* handshake type: client hello */
++            c->ssl->client_hello_len = (p_client_hello[0] << 16) | (p_client_hello[1] << 8) | p_client_hello[2];
++            p_client_hello += 3; /* length */
++            
++            c->ssl->client_hello_buf = ngx_calloc_buf(c->pool);
++            c->ssl->client_hello_buf->start = ngx_palloc(c->pool, c->ssl->client_hello_len);
++            ngx_memcpy(c->ssl->client_hello_buf->start, p_client_hello, c->ssl->client_hello_len);
++            c->ssl->client_hello_buf->pos = c->ssl->client_hello_buf->start;
++            c->ssl->client_hello_buf->last = c->ssl->client_hello_buf->start;
++            c->ssl->client_hello_buf->end = c->ssl->client_hello_buf->start + c->ssl->client_hello_len;
++
+             ngx_reusable_connection(c, 0);
+ 
+             rc = ngx_ssl_handshake(c);
+@@ -803,6 +844,8 @@ ngx_http_ssl_handshake_handler(ngx_conne
+ 
+         c->ssl->no_wait_shutdown = 1;
+ 
++        ngx_http_ssl_preread_handler(c);
++
+ #if (NGX_HTTP_V2                                                              \
+      && defined TLSEXT_TYPE_application_layer_protocol_negotiation)
+         {
+@@ -843,6 +886,242 @@ ngx_http_ssl_handshake_handler(ngx_conne
+     ngx_http_close_connection(c);
+ }
+ 
++static void
++ngx_http_ssl_preread_handler(ngx_connection_t *c)
++{
++    ngx_buf_t        *buf;
++    ngx_pool_t        *ja3_pool;
++    int             ssl_version;
++    unsigned short tmp = 0, *ciphers = NULL, *extensions = NULL, *curves = NULL, *point_formats = NULL, cs, ext_type, curve, ecpf;
++    size_t          i = 0, j = 0, tmp_len = 0, ciphers_len = 0, extensions_len = 0, curves_len = 0, point_formats_len = 0;
++    u_char  *p_ext, *p_tmp;
++
++    ngx_str_t cs_str = ngx_null_string;
++    ngx_str_t ext_str = ngx_null_string;
++    ngx_str_t curve_str = ngx_null_string;
++    ngx_str_t ecpf_str = ngx_null_string;
++    size_t str_pos, cs_pos = 0, ext_pos = 0, curve_pos = 0, ecpf_pos = 0;
++    size_t str_len, ssl_ver_len = 0, cs_len = 0, ext_len = 0, curve_len = 0;
++
++    c->ssl->ja3_pool = ngx_create_pool(1024, c->log);
++    ja3_pool = c->ssl->ja3_pool;
++
++    if (c == NULL || c->ssl == NULL) {
++        return;
++    }
++
++    if (c->ssl->client_hello_buf == NULL || c->ssl->client_hello_len == 0) {
++        return;
++    }
++    
++    buf = c->ssl->client_hello_buf;
++    ssl_version = (buf->pos[0] << 8) + buf->pos[1];
++    ssl_ver_len = get_int_len(ssl_version);
++
++    str_len = ssl_ver_len;
++    str_len++; // comma
++
++    buf->pos += 2;
++    buf->pos += SSL3_RANDOM_SIZE;
++    
++    tmp_len = buf->pos[0]; //Session ID
++    if (0 < tmp_len && SSL_MAX_SSL_SESSION_ID_LENGTH >= tmp_len) {
++        buf->pos += tmp_len;
++    }
++    buf->pos++;
++
++    ciphers_len = (buf->pos[0] << 8) + buf->pos[1];
++    ciphers_len /= 2;
++
++    tmp_len = ciphers_len * sizeof(unsigned short);
++    ciphers = ngx_pnalloc(ja3_pool, tmp_len);
++
++    if (ciphers == NULL) {
++        return;
++    }
++
++    buf->pos += 2;
++    /* Exclude GREASE cipher suites */
++    for (i = 0; i < ciphers_len; ++i) {
++        ngx_memcpy(&tmp, buf->pos + i * sizeof(uint16_t), sizeof(uint16_t));
++        if (is_ext_greased(tmp)) {
++            ciphers[j++] = GREASE_BEGIN;
++        } else {
++            ciphers[j++] = tmp;
++        }
++    }
++
++    buf->pos += ciphers_len * 2;
++
++    tmp_len = buf->pos[0];
++    buf->pos++;
++    buf->pos += tmp_len;
++
++    if (buf->pos == buf->end) {
++        return;
++    }
++
++    extensions_len = (buf->pos[0] << 8) + buf->pos[1];
++    buf->pos += 2;
++
++    extensions = ngx_pnalloc(ja3_pool, extensions_len);
++    j = 0;
++    p_ext = buf->pos;
++    while (p_ext < buf->end) {
++        tmp = (p_ext[0] << 8) + p_ext[1];
++        if (is_ext_greased(tmp)) {
++            extensions[j++] = GREASE_BEGIN;
++        } else {
++            extensions[j++] = tmp;
++        }
++        p_ext += 2;
++        tmp_len = (p_ext[0] << 8) + p_ext[1];
++        p_ext += 2;
++
++        if (tmp == TLSEXT_TYPE_supported_groups) {
++            curves_len = (p_ext[0] << 8) + p_ext[1];
++            curves = ngx_pnalloc(ja3_pool, curves_len);
++            p_tmp = p_ext;
++            p_tmp += 2;
++            
++            for (i = 0; i < curves_len / 2; i++) {
++                tmp = (p_tmp[i * 2] << 8) + p_tmp[i * 2 + 1];
++                if (is_ext_greased(tmp)) {
++                    curves[i] = GREASE_BEGIN;
++                } else {
++                    curves[i] = tmp;
++                }
++            }
++        }
++
++        if (tmp == TLSEXT_TYPE_ec_point_formats) {
++            point_formats_len = p_ext[0];
++            point_formats = ngx_pnalloc(ja3_pool, 2);
++            p_tmp = p_ext;
++            p_tmp += point_formats_len;
++            
++            tmp = p_tmp[point_formats_len - 1];
++            if (!is_ext_greased(tmp)) {
++                point_formats[point_formats_len - 1] = tmp;
++            }
++        }
++
++        p_ext += tmp_len;
++    }
++    extensions_len = j * 2;
++    ngx_log_debug1(NGX_LOG_DEBUG_HTTP, c->log, 0,
++                       "Extensions length: %d", extensions_len);
++
++    cs_str.data = ngx_pnalloc(ja3_pool, ciphers_len * 6 - 1);
++    if (cs_str.data == NULL) {
++        return;
++    }
++
++    for (i = 0; i < ciphers_len; i++) {
++        cs = htons(ciphers[i]);
++        if (GREASE_BEGIN == cs) {
++            continue;
++        }
++        cs_len = get_int_len(cs);
++        ngx_sprintf(cs_str.data + cs_pos, "%d", cs);
++        
++        cs_pos += cs_len;
++        if (i != ciphers_len - 1) {
++            cs_str.data[cs_pos] = '-';
++            cs_pos++;
++        }
++
++    }
++    cs_str.len = cs_pos;
++
++    str_len += cs_str.len;
++    str_len++; // comma
++
++    ext_str.data = ngx_pnalloc(ja3_pool, extensions_len * 6 - 1);
++    for (i = 0; i < extensions_len / 2; i++) {
++        ext_type = extensions[i];
++        if (GREASE_BEGIN == ext_type) {
++            continue;
++        }
++        ext_len = get_int_len(ext_type);
++        ngx_sprintf(ext_str.data + ext_pos, "%d", ext_type);
++        
++        ext_pos += ext_len;
++        if (i != extensions_len / 2 - 1) {
++            ext_str.data[ext_pos] = '-';
++            ext_pos++;
++        }
++
++    }
++    ext_str.len = ext_pos;
++
++    str_len += ext_str.len;
++    str_len++; // comma
++
++    curve_str.data = ngx_pnalloc(ja3_pool, curves_len * 6 - 1);
++    for (i = 0; i < curves_len / 2; i++) {
++        curve = curves[i];
++        if (GREASE_BEGIN == curve) {
++            continue;
++        }
++        curve_len = get_int_len(curve);
++        ngx_sprintf(curve_str.data + curve_pos, "%d", curve);
++        
++        curve_pos += curve_len;
++        if (i != curves_len / 2 - 1) {
++            curve_str.data[curve_pos] = '-';
++            curve_pos++;
++        }
++
++    }
++
++    curve_str.len = curve_pos;
++
++    str_len += curve_str.len;
++    str_len++; // comma
++
++    ecpf_str.data = ngx_pnalloc(ja3_pool, point_formats_len);
++    ecpf = point_formats[point_formats_len - 1];
++    ngx_sprintf(ecpf_str.data + ecpf_pos, "%d", ecpf);
++    ecpf_pos++;
++    ecpf_str.len = ecpf_pos;
++
++    str_len += ecpf_str.len;
++
++
++    c->ssl->ja3_str.data = ngx_pnalloc(c->pool, str_len + 1);
++    if (c->ssl->ja3_str.data == NULL) {
++        return;
++    }
++
++    ngx_snprintf(c->ssl->ja3_str.data, ssl_ver_len, "%d", ssl_version);
++    str_pos = ssl_ver_len;
++    c->ssl->ja3_str.data[str_pos] = ',';
++    str_pos++;
++
++    ngx_memcpy(c->ssl->ja3_str.data + str_pos, cs_str.data, cs_str.len);
++    str_pos += cs_str.len;
++    c->ssl->ja3_str.data[str_pos] = ',';
++    str_pos++;
++
++    ngx_memcpy(c->ssl->ja3_str.data + str_pos, ext_str.data, ext_str.len);
++    str_pos += ext_str.len;
++    c->ssl->ja3_str.data[str_pos] = ',';
++    str_pos++;
++
++    ngx_memcpy(c->ssl->ja3_str.data + str_pos, curve_str.data, curve_str.len);
++    str_pos += curve_str.len;
++    c->ssl->ja3_str.data[str_pos] = ',';
++    str_pos++;
++
++    ngx_memcpy(c->ssl->ja3_str.data + str_pos, ecpf_str.data, ecpf_str.len);
++    str_pos += ecpf_str.len;
++
++    c->ssl->ja3_str.len = str_len;
++
++    return;
++}
++
+ 
+ #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
+ 
+diff -uprN a/src/stream/ngx_stream_handler.c b/src/stream/ngx_stream_handler.c
+--- a/src/stream/ngx_stream_handler.c	2022-10-19 15:56:21.000000000 +0800
++++ b/src/stream/ngx_stream_handler.c	2022-12-10 14:00:08.426228617 +0800
+@@ -353,6 +353,10 @@ ngx_stream_close_connection(ngx_connecti
+     ngx_close_connection(c);
+ 
+     ngx_destroy_pool(pool);
++
++    if (c->ssl && c->ssl->ja3_pool) {
++        ngx_destroy_pool(c->ssl->ja3_pool);
++    }
+ }
+ 
+ 
+diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_ssl_preread_module.c
+--- a/src/stream/ngx_stream_ssl_preread_module.c	2022-12-10 14:02:08.222224483 +0800
++++ b/src/stream/ngx_stream_ssl_preread_module.c	2022-12-10 14:02:08.222224483 +0800
+@@ -6,8 +6,23 @@
+ 
+ #include <ngx_config.h>
+ #include <ngx_core.h>
++#include <ngx_md5.h>
+ #include <ngx_stream.h>
+ 
++#include <openssl/tls1.h>
++#include <math.h>
++
++static const unsigned short GREASE_BEGIN = 0x0a0a;
++static const unsigned short GREASE_BITMASK = 0x0f0f;
++
++static int is_ext_greased(int id)
++{
++    if (GREASE_BEGIN == (id & GREASE_BITMASK)) {
++        return 1;
++    }
++
++    return 0;
++}
+ 
+ typedef struct {
+     ngx_flag_t      enabled;
+@@ -27,6 +42,21 @@ typedef struct {
+     ngx_log_t      *log;
+     ngx_pool_t     *pool;
+     ngx_uint_t      state;
++
++    int             ssl_version;
++    unsigned short *ciphers;
++    size_t          ciphers_len;
++    unsigned short *extensions;
++    size_t          extensions_len;
++    unsigned short  *curves;
++    size_t          curves_len;
++    unsigned char  *point_formats;
++    size_t          point_formats_len;
++
++    ngx_pool_t     *ja3_pool;
++    ngx_str_t       ja3_str;
++    ngx_str_t       ja3_md5;
++    
+ } ngx_stream_ssl_preread_ctx_t;
+ 
+ 
+@@ -39,6 +69,10 @@ static ngx_int_t ngx_stream_ssl_preread_
+     ngx_stream_session_t *s, ngx_stream_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_stream_ssl_preread_alpn_protocols_variable(
+     ngx_stream_session_t *s, ngx_stream_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_stream_ssl_preread_ja3_hash_variable(
++    ngx_stream_session_t *s, ngx_stream_variable_value_t *v, uintptr_t data);
++static ngx_int_t ngx_stream_ssl_preread_ja3_variable(
++    ngx_stream_session_t *s, ngx_stream_variable_value_t *v, uintptr_t data);
+ static ngx_int_t ngx_stream_ssl_preread_add_variables(ngx_conf_t *cf);
+ static void *ngx_stream_ssl_preread_create_srv_conf(ngx_conf_t *cf);
+ static char *ngx_stream_ssl_preread_merge_srv_conf(ngx_conf_t *cf, void *parent,
+@@ -98,9 +132,18 @@ static ngx_stream_variable_t  ngx_stream
+     { ngx_string("ssl_preread_alpn_protocols"), NULL,
+       ngx_stream_ssl_preread_alpn_protocols_variable, 0, 0, 0 },
+ 
++    { ngx_string("ssl_preread_ja3"), NULL,
++      ngx_stream_ssl_preread_ja3_variable, 0, 0, 0 },
++
++    { ngx_string("ssl_preread_ja3_hash"), NULL,
++      ngx_stream_ssl_preread_ja3_hash_variable, 0, 0, 0 },
++
+       ngx_stream_null_variable
+ };
+ 
++static size_t get_int_len(int value) {
++    return (value == 0 ? 1 : (int)(log10(value) + 1));
++}
+ 
+ static ngx_int_t
+ ngx_stream_ssl_preread_handler(ngx_stream_session_t *s)
+@@ -112,6 +155,14 @@ ngx_stream_ssl_preread_handler(ngx_strea
+     ngx_stream_ssl_preread_ctx_t       *ctx;
+     ngx_stream_ssl_preread_srv_conf_t  *sscf;
+ 
++    ngx_str_t cs_str = ngx_null_string;
++    ngx_str_t ext_str = ngx_null_string;
++    ngx_str_t curve_str = ngx_null_string;
++    ngx_str_t ecpf_str = ngx_null_string;
++    size_t i, str_pos, cs_pos = 0, ext_pos = 0, curve_pos = 0, ecpf_pos = 0;
++    size_t str_len, ssl_ver_len = 0, cs_len = 0, ext_len = 0, curve_len = 0;
++    unsigned short cs, ext_type, curve, ecpf;
++
+     c = s->connection;
+ 
+     ngx_log_debug0(NGX_LOG_DEBUG_STREAM, c->log, 0, "ssl preread handler");
+@@ -144,6 +195,10 @@ ngx_stream_ssl_preread_handler(ngx_strea
+         ctx->pos = c->buffer->pos;
+     }
+ 
++    if (ctx->ja3_pool == NULL) {
++        ctx->ja3_pool = ngx_create_pool(1024, c->log);
++    }
++
+     p = ctx->pos;
+     last = c->buffer->last;
+ 
+@@ -187,6 +242,113 @@ ngx_stream_ssl_preread_handler(ngx_strea
+             return NGX_DECLINED;
+         }
+ 
++        if (ctx->ja3_str.data == NULL || ctx->ja3_str.len == 0) {
++            ssl_ver_len = get_int_len(ctx->ssl_version);
++
++            str_len = ssl_ver_len;
++            str_len++; // comma
++
++            cs_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->ciphers_len * 6 - 1);
++            for (i = 0; i < ctx->ciphers_len; i++) {
++                cs = htons(ctx->ciphers[i]);
++                if (GREASE_BEGIN == cs) {
++                    continue;
++                }
++                cs_len = get_int_len(cs);
++                ngx_sprintf(cs_str.data + cs_pos, "%d", cs);
++                
++                cs_pos += cs_len;
++                if (i != ctx->ciphers_len - 1) {
++                    cs_str.data[cs_pos] = '-';
++                    cs_pos++;
++                }
++
++            }
++            cs_str.len = cs_pos;
++
++            str_len += cs_str.len;
++            str_len++; // comma
++
++            ext_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->extensions_len * 6 - 1);
++            for (i = 0; i < ctx->extensions_len / 2; i++) {
++                ext_type = ctx->extensions[i];
++                if (GREASE_BEGIN == ext_type) {
++                    continue;
++                }
++                ext_len = get_int_len(ext_type);
++                ngx_sprintf(ext_str.data + ext_pos, "%d", ext_type);
++                
++                ext_pos += ext_len;
++                if (i != ctx->extensions_len / 2 - 1) {
++                    ext_str.data[ext_pos] = '-';
++                    ext_pos++;
++                }
++
++            }
++            ext_str.len = ext_pos;
++
++            str_len += ext_str.len;
++            str_len++; // comma
++
++            curve_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->curves_len * 6 - 1);
++            for (i = 0; i < ctx->curves_len / 2; i++) {
++                curve = ctx->curves[i];
++                if (GREASE_BEGIN == curve) {
++                    continue;
++                }
++                curve_len = get_int_len(curve);
++                ngx_sprintf(curve_str.data + curve_pos, "%d", curve);
++                
++                curve_pos += curve_len;
++                if (i != ctx->curves_len / 2 - 1) {
++                    curve_str.data[curve_pos] = '-';
++                    curve_pos++;
++                }
++
++            }
++
++            curve_str.len = curve_pos;
++
++            str_len += curve_str.len;
++            str_len++; // comma
++
++            ecpf_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->point_formats_len);
++            ecpf = ctx->point_formats[ctx->point_formats_len - 1];
++            ngx_sprintf(ecpf_str.data + ecpf_pos, "%d", ecpf);
++            ecpf_pos++;
++            ecpf_str.len = ecpf_pos;
++
++            str_len += ecpf_str.len;
++
++
++            ctx->ja3_str.data = ngx_pnalloc(ctx->pool, str_len + 1);
++
++            ngx_snprintf(ctx->ja3_str.data, ssl_ver_len, "%d", ctx->ssl_version);
++            str_pos = ssl_ver_len;
++            ctx->ja3_str.data[str_pos] = ',';
++            str_pos++;
++
++            ngx_memcpy(ctx->ja3_str.data + str_pos, cs_str.data, cs_str.len);
++            str_pos += cs_str.len;
++            ctx->ja3_str.data[str_pos] = ',';
++            str_pos++;
++
++            ngx_memcpy(ctx->ja3_str.data + str_pos, ext_str.data, ext_str.len);
++            str_pos += ext_str.len;
++            ctx->ja3_str.data[str_pos] = ',';
++            str_pos++;
++
++            ngx_memcpy(ctx->ja3_str.data + str_pos, curve_str.data, curve_str.len);
++            str_pos += curve_str.len;
++            ctx->ja3_str.data[str_pos] = ',';
++            str_pos++;
++
++            ngx_memcpy(ctx->ja3_str.data + str_pos, ecpf_str.data, ecpf_str.len);
++            str_pos += ecpf_str.len;
++
++            ctx->ja3_str.len = str_len;
++        }
++
+         if (rc != NGX_AGAIN) {
+             return rc;
+         }
+@@ -207,6 +369,10 @@ ngx_stream_ssl_preread_parse_record(ngx_
+     size_t   left, n, size, ext;
+     u_char  *dst, *p;
+ 
++    size_t i = 0, j = 0, len = 0;
++    unsigned short tmp = 0;
++    u_char  *p_ext, *p_tmp;
++
+     enum {
+         sw_start = 0,
+         sw_header,          /* handshake msg_type, length */
+@@ -274,6 +440,8 @@ ngx_stream_ssl_preread_parse_record(ngx_
+             dst = ctx->version;
+             size = 2;
+             left = (p[1] << 16) + (p[2] << 8) + p[3];
++
++            ctx->ssl_version = (pos[0] << 8) + pos[1];
+             break;
+ 
+         case sw_version:
+@@ -298,12 +466,33 @@ ngx_stream_ssl_preread_parse_record(ngx_
+             state = sw_cs_len;
+             dst = p;
+             size = 2;
++
++            ctx->ciphers_len = (pos[0] << 8) + pos[1];
++            ctx->ciphers_len /= 2;
+             break;
+ 
+         case sw_cs_len:
+             state = sw_cs;
+             dst = NULL;
+             size = (p[0] << 8) + p[1];
++
++            len = ctx->ciphers_len * sizeof(unsigned short);
++            ctx->ciphers = ngx_pnalloc(ctx->ja3_pool, len);
++
++            if (ctx->ciphers == NULL) {
++                return NGX_DECLINED;
++            }
++
++            /* Exclude GREASE cipher suites */
++            for (i = 0; i < ctx->ciphers_len; ++i) {
++                ngx_memcpy(&tmp, pos + i * sizeof(uint16_t), sizeof(uint16_t));
++                if (is_ext_greased(tmp)) {
++                    ctx->ciphers[j++] = GREASE_BEGIN;
++                } else {
++                    ctx->ciphers[j++] = tmp;
++                }
++            }
++
+             break;
+ 
+         case sw_cs:
+@@ -327,6 +516,8 @@ ngx_stream_ssl_preread_parse_record(ngx_
+             state = sw_ext;
+             dst = p;
+             size = 2;
++
++            ctx->extensions_len = (pos[0] << 8) + pos[1];
+             break;
+ 
+         case sw_ext:
+@@ -337,6 +528,54 @@ ngx_stream_ssl_preread_parse_record(ngx_
+             state = sw_ext_header;
+             dst = p;
+             size = 4;
++
++            if (ctx->extensions == NULL) {
++                ctx->extensions = ngx_pnalloc(ctx->ja3_pool, ctx->extensions_len);
++
++                j = 0;
++                p_ext = pos;
++                while (p_ext < last) {
++                    tmp = (p_ext[0] << 8) + p_ext[1];
++                    if (is_ext_greased(tmp)) {
++                        ctx->extensions[j++] = GREASE_BEGIN;
++                    } else {
++                        ctx->extensions[j++] = tmp;
++                    }
++                    p_ext += 2;
++                    len = (p_ext[0] << 8) + p_ext[1];
++                    p_ext += 2;
++
++                    if (tmp == TLSEXT_TYPE_supported_groups) {
++                        ctx->curves_len = (p_ext[0] << 8) + p_ext[1];
++                        ctx->curves = ngx_pnalloc(ctx->ja3_pool, ctx->curves_len);
++                        p_tmp = p_ext;
++                        p_tmp += 2;
++                        for (i = 0; i < ctx->curves_len / 2; i++) {
++                            tmp = (p_tmp[i * 2] << 8) + p_tmp[i * 2 + 1];
++                            if (is_ext_greased(tmp)) {
++                                ctx->curves[i] = GREASE_BEGIN;
++                            } else {
++                                ctx->curves[i] = tmp;
++                            }
++                        }
++                    }
++
++                    if (tmp == TLSEXT_TYPE_ec_point_formats) {
++                        ctx->point_formats_len = p_ext[0];
++                        ctx->point_formats = ngx_pnalloc(ctx->ja3_pool, 2);
++                        p_tmp = p_ext;
++                        p_tmp += ctx->point_formats_len;
++                        
++                        tmp = p_tmp[ctx->point_formats_len - 1];
++                        if (!is_ext_greased(tmp)) {
++                            ctx->point_formats[ctx->point_formats_len - 1] = tmp;
++                        }
++                    }
++
++                    p_ext += len;
++                }
++                ctx->extensions_len = j * 2;
++            }
+             break;
+ 
+         case sw_ext_header:
+@@ -597,6 +836,61 @@ ngx_stream_ssl_preread_alpn_protocols_va
+     return NGX_OK;
+ }
+ 
++static ngx_int_t
++ngx_stream_ssl_preread_ja3_hash_variable(ngx_stream_session_t *s,
++    ngx_variable_value_t *v, uintptr_t data)
++{
++    ngx_stream_ssl_preread_ctx_t  *ctx;
++    ngx_md5_t                      md5_ctx;
++    u_char                         hash[16] = {0};
++
++    ctx = ngx_stream_get_module_ctx(s, ngx_stream_ssl_preread_module);
++
++    if (ctx == NULL) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    v->data = ngx_pcalloc(ctx->pool, 32);
++
++    if (v->data == NULL) {
++        return NGX_ERROR;
++    }
++
++    ngx_md5_init(&md5_ctx);
++    ngx_md5_update(&md5_ctx, ctx->ja3_str.data, ctx->ja3_str.len);
++    ngx_md5_final(hash, &md5_ctx);
++    ngx_hex_dump(v->data, hash, 16);
++    v->len = 32;
++
++    v->valid = 1;
++    v->no_cacheable = 0;
++    v->not_found = 0;
++
++    return NGX_OK;
++}
++
++static ngx_int_t
++ngx_stream_ssl_preread_ja3_variable(ngx_stream_session_t *s,
++    ngx_variable_value_t *v, uintptr_t data)
++{
++    ngx_stream_ssl_preread_ctx_t  *ctx;
++
++    ctx = ngx_stream_get_module_ctx(s, ngx_stream_ssl_preread_module);
++
++    if (ctx == NULL) {
++        v->not_found = 1;
++        return NGX_OK;
++    }
++
++    v->valid = 1;
++    v->no_cacheable = 0;
++    v->not_found = 0;
++    v->len = ctx->ja3_str.len;
++    v->data = ctx->ja3_str.data;
++
++    return NGX_OK;
++}
+ 
+ static ngx_int_t
+ ngx_stream_ssl_preread_add_variables(ngx_conf_t *cf)
