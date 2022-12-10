@@ -76,6 +76,7 @@ jobs:
           if-no-files-found: error
 
   build-nginx:
+    needs: build-bssl
     runs-on: ubuntu-latest
 
     steps:
