@@ -16,7 +16,7 @@ jobs:
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
-          version: '12'
+          version: '15'
 
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.13
@@ -98,7 +98,7 @@ jobs:
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v1
         with:
-          version: '12'
+          version: '15'
 
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.13
