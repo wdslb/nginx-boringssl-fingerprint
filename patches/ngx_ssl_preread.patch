@@ -1,6 +1,6 @@
 diff -uprN a/src/event/ngx_event_openssl.c b/src/event/ngx_event_openssl.c
---- a/src/event/ngx_event_openssl.c	2022-12-09 15:20:24.639015133 +0800
-+++ b/src/event/ngx_event_openssl.c	2022-12-10 13:58:29.646232058 +0800
+--- a/src/event/ngx_event_openssl.c
++++ b/src/event/ngx_event_openssl.c
 @@ -8,6 +8,7 @@
  #include <ngx_config.h>
  #include <ngx_core.h>
@@ -55,8 +55,8 @@ diff -uprN a/src/event/ngx_event_openssl.c b/src/event/ngx_event_openssl.c
  ngx_int_t
  ngx_ssl_check_host(ngx_connection_t *c, ngx_str_t *name)
 diff -uprN a/src/event/ngx_event_openssl.h b/src/event/ngx_event_openssl.h
---- a/src/event/ngx_event_openssl.h	2022-10-19 15:56:21.000000000 +0800
-+++ b/src/event/ngx_event_openssl.h	2022-12-10 13:58:34.278231896 +0800
+--- a/src/event/ngx_event_openssl.h
++++ b/src/event/ngx_event_openssl.h
 @@ -120,6 +120,13 @@ struct ngx_ssl_connection_s {
      unsigned                    in_ocsp:1;
      unsigned                    early_preread:1;
@@ -83,8 +83,8 @@ diff -uprN a/src/event/ngx_event_openssl.h b/src/event/ngx_event_openssl.h
  extern int  ngx_ssl_connection_index;
  extern int  ngx_ssl_server_conf_index;
 diff -uprN a/src/http/modules/ngx_http_ssl_module.c b/src/http/modules/ngx_http_ssl_module.c
---- a/src/http/modules/ngx_http_ssl_module.c	2022-12-09 15:21:47.159016429 +0800
-+++ b/src/http/modules/ngx_http_ssl_module.c	2022-12-10 13:59:39.714229615 +0800
+--- a/src/http/modules/ngx_http_ssl_module.c
++++ b/src/http/modules/ngx_http_ssl_module.c
 @@ -405,6 +405,12 @@ static ngx_http_variable_t  ngx_http_ssl
      { ngx_string("ssl_client_v_remain"), NULL, ngx_http_ssl_variable,
        (uintptr_t) ngx_ssl_get_client_v_remain, NGX_HTTP_VAR_CHANGEABLE, 0 },
@@ -99,8 +99,8 @@ diff -uprN a/src/http/modules/ngx_http_ssl_module.c b/src/http/modules/ngx_http_
  };
  
 diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
---- a/src/http/ngx_http_request.c	2022-10-19 15:56:21.000000000 +0800
-+++ b/src/http/ngx_http_request.c	2022-12-10 13:59:12.770230552 +0800
+--- a/src/http/ngx_http_request.c
++++ b/src/http/ngx_http_request.c
 @@ -9,6 +9,24 @@
  #include <ngx_core.h>
  #include <ngx_http.h>
@@ -186,7 +186,7 @@ diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
  #if (NGX_HTTP_V2                                                              \
       && defined TLSEXT_TYPE_application_layer_protocol_negotiation)
          {
-@@ -843,6 +886,242 @@ ngx_http_ssl_handshake_handler(ngx_conne
+@@ -843,6 +886,245 @@ ngx_http_ssl_handshake_handler(ngx_conne
      ngx_http_close_connection(c);
  }
  
@@ -300,13 +300,16 @@ diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
 +
 +        if (tmp == TLSEXT_TYPE_ec_point_formats) {
 +            point_formats_len = p_ext[0];
-+            point_formats = ngx_pnalloc(ja3_pool, 2);
++            if (point_formats_len > sizeof(unsigned char)) {
++                point_formats_len = sizeof(unsigned char);
++            }
++            point_formats = ngx_pnalloc(ja3_pool, sizeof(unsigned short *));
 +            p_tmp = p_ext;
 +            p_tmp += point_formats_len;
 +            
-+            tmp = p_tmp[point_formats_len - 1];
++            tmp = p_tmp[0];
 +            if (!is_ext_greased(tmp)) {
-+                point_formats[point_formats_len - 1] = tmp;
++                point_formats[0] = tmp;
 +            }
 +        }
 +
@@ -385,7 +388,7 @@ diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
 +    str_len++; // comma
 +
 +    ecpf_str.data = ngx_pnalloc(ja3_pool, point_formats_len);
-+    ecpf = point_formats[point_formats_len - 1];
++    ecpf = point_formats[0];
 +    ngx_sprintf(ecpf_str.data + ecpf_pos, "%d", ecpf);
 +    ecpf_pos++;
 +    ecpf_str.len = ecpf_pos;
@@ -430,8 +433,8 @@ diff -uprN a/src/http/ngx_http_request.c b/src/http/ngx_http_request.c
  #ifdef SSL_CTRL_SET_TLSEXT_HOSTNAME
  
 diff -uprN a/src/stream/ngx_stream_handler.c b/src/stream/ngx_stream_handler.c
---- a/src/stream/ngx_stream_handler.c	2022-10-19 15:56:21.000000000 +0800
-+++ b/src/stream/ngx_stream_handler.c	2022-12-10 14:00:08.426228617 +0800
+--- a/src/stream/ngx_stream_handler.c
++++ b/src/stream/ngx_stream_handler.c
 @@ -353,6 +353,10 @@ ngx_stream_close_connection(ngx_connecti
      ngx_close_connection(c);
  
@@ -444,8 +447,8 @@ diff -uprN a/src/stream/ngx_stream_handler.c b/src/stream/ngx_stream_handler.c
  
  
 diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_ssl_preread_module.c
---- a/src/stream/ngx_stream_ssl_preread_module.c	2022-12-10 14:02:08.222224483 +0800
-+++ b/src/stream/ngx_stream_ssl_preread_module.c	2022-12-10 14:02:08.222224483 +0800
+--- a/src/stream/ngx_stream_ssl_preread_module.c
++++ b/src/stream/ngx_stream_ssl_preread_module.c
 @@ -6,8 +6,23 @@
  
  #include <ngx_config.h>
@@ -623,7 +626,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
 +            str_len++; // comma
 +
 +            ecpf_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->point_formats_len);
-+            ecpf = ctx->point_formats[ctx->point_formats_len - 1];
++            ecpf = ctx->point_formats[0];
 +            ngx_sprintf(ecpf_str.data + ecpf_pos, "%d", ecpf);
 +            ecpf_pos++;
 +            ecpf_str.len = ecpf_pos;
@@ -725,7 +728,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
              break;
  
          case sw_ext:
-@@ -337,6 +528,54 @@ ngx_stream_ssl_preread_parse_record(ngx_
+@@ -337,6 +528,57 @@ ngx_stream_ssl_preread_parse_record(ngx_
              state = sw_ext_header;
              dst = p;
              size = 4;
@@ -763,13 +766,16 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
 +
 +                    if (tmp == TLSEXT_TYPE_ec_point_formats) {
 +                        ctx->point_formats_len = p_ext[0];
-+                        ctx->point_formats = ngx_pnalloc(ctx->ja3_pool, 2);
++                        if (ctx->point_formats_len > sizeof(unsigned char)) {
++                            ctx->point_formats_len = sizeof(unsigned char);
++                        }
++                        ctx->point_formats = ngx_pnalloc(ctx->ja3_pool, sizeof(unsigned short *));
 +                        p_tmp = p_ext;
 +                        p_tmp += ctx->point_formats_len;
 +                        
-+                        tmp = p_tmp[ctx->point_formats_len - 1];
++                        tmp = p_tmp[0];
 +                        if (!is_ext_greased(tmp)) {
-+                            ctx->point_formats[ctx->point_formats_len - 1] = tmp;
++                            ctx->point_formats[0] = tmp;
 +                        }
 +                    }
 +
@@ -780,7 +786,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
              break;
  
          case sw_ext_header:
-@@ -597,6 +836,61 @@ ngx_stream_ssl_preread_alpn_protocols_va
+@@ -597,6 +839,61 @@ ngx_stream_ssl_preread_alpn_protocols_va
      return NGX_OK;
  }
  
