@@ -181,7 +181,7 @@ jobs:
           LD: ${{ env.LLVM_PATH }}/bin/clang
           LINK: ${{ env.LLVM_PATH }}/bin/clang
         working-directory: ${{github.workspace}}/nginx-1.23.2
-        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -DNGX_DEBUG_PALLOC=1 -fPIC -fsanitize=address -fsanitize-recover=address -fsanitize-address-use-after-scope -fno-stack-protector -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -fsanitize=address -lrt -lssl -lcrypto"
+        run: ./configure --with-zlib=$(pwd)/../zlib --with-openssl-opt=enable-tls1_3 --with-http_realip_module --with-http_ssl_module --with-http_v2_module --with-stream --with-stream_realip_module --with-stream_ssl_module --with-stream_ssl_preread_module --with-debug --with-cc-opt="-I../boringssl/include -DNGX_DEBUG_PALLOC=1 -fPIC -fsanitize=address -fsanitize-recover=address -fsanitize-address-use-after-scope -fno-stack-protector -fno-omit-frame-pointer" --with-ld-opt="-L../boringssl/build/ssl -L../boringssl/build/crypto -fPIC -fsanitize=address -lrt -lssl -lcrypto"
 
       - name: Make nginx
         env:
@@ -194,7 +194,7 @@ jobs:
       - name: Test nginx
         env:
           TEST_NGINX_BINARY: ${{github.workspace}}/nginx-1.23.2/objs/nginx
-          ASAN_OPTIONS: "detect_leaks=0:symbolize=1:halt_on_error=0:strict_string_checks=1:verbosity=1"
+          ASAN_OPTIONS: "detect_leaks=0:symbolize=1:halt_on_error=0"
           #ASAN_SYMBOLIZER_PATH: ${{ env.LLVM_PATH }}/bin/llvm-symbolizer
         working-directory: ${{github.workspace}}/nginx-tests
         run: prove .
