@@ -551,7 +551,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
      p = ctx->pos;
      last = c->buffer->last;
  
-@@ -187,6 +242,113 @@ ngx_stream_ssl_preread_handler(ngx_strea
+@@ -187,6 +242,126 @@ ngx_stream_ssl_preread_handler(ngx_strea
              return NGX_DECLINED;
          }
  
@@ -561,74 +561,87 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
 +            str_len = ssl_ver_len;
 +            str_len++; // comma
 +
-+            cs_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->ciphers_len * 6 - 1);
-+            for (i = 0; i < ctx->ciphers_len; i++) {
-+                cs = htons(ctx->ciphers[i]);
-+                if (GREASE_BEGIN == cs) {
-+                    continue;
++            if (0 < ctx->ciphers_len) {
++                ngx_log_debug1(NGX_LOG_DEBUG_STREAM, ctx->log, 0,
++                            "ssl preread: Cipher Suites alloc %z", ctx->ciphers_len * 6 - 1);
++                cs_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->ciphers_len * 6 - 1);
++                for (i = 0; i < ctx->ciphers_len; i++) {
++                    cs = htons(ctx->ciphers[i]);
++                    if (GREASE_BEGIN == cs) {
++                        continue;
++                    }
++                    cs_len = get_int_len(cs);
++                    ngx_sprintf(cs_str.data + cs_pos, "%d", cs);
++                    
++                    cs_pos += cs_len;
++                    if (i != ctx->ciphers_len - 1) {
++                        cs_str.data[cs_pos] = '-';
++                        cs_pos++;
++                    }
 +                }
-+                cs_len = get_int_len(cs);
-+                ngx_sprintf(cs_str.data + cs_pos, "%d", cs);
-+                
-+                cs_pos += cs_len;
-+                if (i != ctx->ciphers_len - 1) {
-+                    cs_str.data[cs_pos] = '-';
-+                    cs_pos++;
-+                }
-+
 +            }
 +            cs_str.len = cs_pos;
 +
 +            str_len += cs_str.len;
 +            str_len++; // comma
 +
-+            ext_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->extensions_len * 6 - 1);
-+            for (i = 0; i < ctx->extensions_len / 2; i++) {
-+                ext_type = ctx->extensions[i];
-+                if (GREASE_BEGIN == ext_type) {
-+                    continue;
++            if (0 < ctx->extensions_len) {
++                ngx_log_debug1(NGX_LOG_DEBUG_STREAM, ctx->log, 0,
++                            "ssl preread: Extensions alloc %z", ctx->extensions_len * 6 - 1);
++                ext_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->extensions_len * 6 - 1);
++                for (i = 0; i < ctx->extensions_len / 2; i++) {
++                    ext_type = ctx->extensions[i];
++                    if (GREASE_BEGIN == ext_type) {
++                        continue;
++                    }
++                    ext_len = get_int_len(ext_type);
++                    ngx_sprintf(ext_str.data + ext_pos, "%d", ext_type);
++                    
++                    ext_pos += ext_len;
++                    if (i != ctx->extensions_len / 2 - 1) {
++                        ext_str.data[ext_pos] = '-';
++                        ext_pos++;
++                    }
 +                }
-+                ext_len = get_int_len(ext_type);
-+                ngx_sprintf(ext_str.data + ext_pos, "%d", ext_type);
-+                
-+                ext_pos += ext_len;
-+                if (i != ctx->extensions_len / 2 - 1) {
-+                    ext_str.data[ext_pos] = '-';
-+                    ext_pos++;
-+                }
-+
 +            }
 +            ext_str.len = ext_pos;
 +
 +            str_len += ext_str.len;
 +            str_len++; // comma
 +
-+            curve_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->curves_len * 6 - 1);
-+            for (i = 0; i < ctx->curves_len / 2; i++) {
-+                curve = ctx->curves[i];
-+                if (GREASE_BEGIN == curve) {
-+                    continue;
-+                }
-+                curve_len = get_int_len(curve);
-+                ngx_sprintf(curve_str.data + curve_pos, "%d", curve);
-+                
-+                curve_pos += curve_len;
-+                if (i != ctx->curves_len / 2 - 1) {
-+                    curve_str.data[curve_pos] = '-';
-+                    curve_pos++;
-+                }
++            if (0 < ctx->curves_len) {
++                ngx_log_debug1(NGX_LOG_DEBUG_STREAM, ctx->log, 0,
++                           "ssl preread: Curves alloc %z", ctx->curves_len * 6 - 1);
++                curve_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->curves_len * 6 - 1);
++                for (i = 0; i < ctx->curves_len / 2; i++) {
++                    curve = ctx->curves[i];
++                    if (GREASE_BEGIN == curve) {
++                        continue;
++                    }
++                    curve_len = get_int_len(curve);
++                    ngx_sprintf(curve_str.data + curve_pos, "%d", curve);
++                    
++                    curve_pos += curve_len;
++                    if (i != ctx->curves_len / 2 - 1) {
++                        curve_str.data[curve_pos] = '-';
++                        curve_pos++;
++                    }
 +
++                }
 +            }
-+
 +            curve_str.len = curve_pos;
 +
 +            str_len += curve_str.len;
 +            str_len++; // comma
 +
-+            ecpf_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->point_formats_len);
-+            ecpf = ctx->point_formats[0];
-+            ngx_sprintf(ecpf_str.data + ecpf_pos, "%d", ecpf);
-+            ecpf_pos++;
++            if (0 < ctx->point_formats_len) {
++                ngx_log_debug1(NGX_LOG_DEBUG_STREAM, ctx->log, 0,
++                           "ssl preread: Point formats alloc %z", ctx->point_formats_len);
++                ecpf_str.data = ngx_pnalloc(ctx->ja3_pool, ctx->point_formats_len);
++                ecpf = ctx->point_formats[0];
++                ngx_sprintf(ecpf_str.data + ecpf_pos, "%d", ecpf);
++                ecpf_pos++;
++            }
 +            ecpf_str.len = ecpf_pos;
 +
 +            str_len += ecpf_str.len;
@@ -665,7 +678,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
          if (rc != NGX_AGAIN) {
              return rc;
          }
-@@ -207,6 +369,10 @@ ngx_stream_ssl_preread_parse_record(ngx_
+@@ -207,6 +382,10 @@ ngx_stream_ssl_preread_parse_record(ngx_
      size_t   left, n, size, ext;
      u_char  *dst, *p;
  
@@ -676,7 +689,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
      enum {
          sw_start = 0,
          sw_header,          /* handshake msg_type, length */
-@@ -274,6 +440,8 @@ ngx_stream_ssl_preread_parse_record(ngx_
+@@ -274,6 +453,8 @@ ngx_stream_ssl_preread_parse_record(ngx_
              dst = ctx->version;
              size = 2;
              left = (p[1] << 16) + (p[2] << 8) + p[3];
@@ -685,12 +698,14 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
              break;
  
          case sw_version:
-@@ -298,12 +466,33 @@ ngx_stream_ssl_preread_parse_record(ngx_
+@@ -298,12 +479,35 @@ ngx_stream_ssl_preread_parse_record(ngx_
              state = sw_cs_len;
              dst = p;
              size = 2;
 +
 +            ctx->ciphers_len = (pos[0] << 8) + pos[1];
++            ngx_log_debug1(NGX_LOG_DEBUG_STREAM, ctx->log, 0,
++                           "ssl preread: Cipher Suites length %z", &ctx->ciphers_len);
 +            ctx->ciphers_len /= 2;
              break;
  
@@ -719,16 +734,18 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
              break;
  
          case sw_cs:
-@@ -327,6 +516,8 @@ ngx_stream_ssl_preread_parse_record(ngx_
+@@ -327,6 +531,10 @@ ngx_stream_ssl_preread_parse_record(ngx_
              state = sw_ext;
              dst = p;
              size = 2;
 +
 +            ctx->extensions_len = (pos[0] << 8) + pos[1];
++            ngx_log_debug1(NGX_LOG_DEBUG_STREAM, ctx->log, 0,
++                           "ssl preread: Extensions length %z", &ctx->extensions_len);
              break;
  
          case sw_ext:
-@@ -337,6 +528,57 @@ ngx_stream_ssl_preread_parse_record(ngx_
+@@ -337,6 +545,57 @@ ngx_stream_ssl_preread_parse_record(ngx_
              state = sw_ext_header;
              dst = p;
              size = 4;
@@ -786,7 +803,7 @@ diff -uprN a/src/stream/ngx_stream_ssl_preread_module.c b/src/stream/ngx_stream_
              break;
  
          case sw_ext_header:
-@@ -597,6 +839,61 @@ ngx_stream_ssl_preread_alpn_protocols_va
+@@ -597,6 +856,61 @@ ngx_stream_ssl_preread_alpn_protocols_va
      return NGX_OK;
  }
  

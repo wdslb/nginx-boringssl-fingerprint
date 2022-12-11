@@ -172,8 +172,8 @@ jobs:
         # Build your program with the given configuration
         run: ls -al
 
-      #- name: Patch
-      #  run: patch -p1 -d nginx-1.23.2 < nginx-boringssl-fingerprint/patches/ngx_ssl_preread.patch
+      - name: Patch
+        run: patch -p1 -d nginx-1.23.2 < nginx-boringssl-fingerprint/patches/ngx_ssl_preread.patch
 
       - name: Configure nginx
         env:
@@ -197,4 +197,4 @@ jobs:
           ASAN_OPTIONS: "detect_leaks=0:symbolize=1:halt_on_error=0"
           #ASAN_SYMBOLIZER_PATH: ${{ env.LLVM_PATH }}/bin/llvm-symbolizer
         working-directory: ${{github.workspace}}/nginx-tests
-        run: prove .
+        run: prove ./h2* ./stream*
